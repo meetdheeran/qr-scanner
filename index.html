@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-  <title>QR → Video (Minimal)</title>
+  <title>QR → Video (7 Attachments)</title>
   <style>
     html,body{margin:0;height:100%;background:#000;font-family:system-ui,Arial;overflow:hidden}
     #player{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
@@ -23,64 +23,78 @@
   </style>
 </head>
 <body>
-
+ 
   <video id="player" playsinline controls></video>
-
+ 
   <div id="bar">
     <button id="scanBtn">Scan QR</button>
     <button id="fsBtn">Fullscreen</button>
     <button id="stopBtn">Stop</button>
-    <div id="status">Ready — QR must say <b>A1</b></div>
+    <div id="status">Ready — scan <b>A1</b> to <b>A7</b></div>
   </div>
-
+ 
   <div id="scanLayer">
     <video id="cam" playsinline autoplay muted></video>
-    <div id="scanHud">Point camera at QR: <b>A1</b></div>
+    <div id="scanHud">Point camera at QR: <b>A1–A7</b></div>
   </div>
-
+ 
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
   <script>
-    const EXPECTED_QR = "A1";
-    const VIDEO_FILE = "video.mp4";
-
+    // ---- Map QR text -> video file ----
+    // Put these mp4 files in the SAME folder as index.html
+    const VIDEO_MAP = {
+      "A1": "a1.mp4",
+      "A2": "a2.mp4",
+      "A3": "a3.mp4",
+      "A4": "a4.mp4",
+      "A5": "a5.mp4",
+      "A6": "a6.mp4",
+      "A7": "a7.mp4"
+    };
+ 
     const player = document.getElementById("player");
     const statusEl = document.getElementById("status");
-
+ 
     const scanLayer = document.getElementById("scanLayer");
     const cam = document.getElementById("cam");
     const scanHud = document.getElementById("scanHud");
-
+ 
     let stream = null;
     let scanning = false;
-
+ 
+    // Debounce so it doesn't keep retriggering while QR stays in view
+    let lastCode = null;
+    let lastSwitchAt = 0;
+    const COOLDOWN_MS = 1200;
+ 
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
-
+ 
     function norm(s){
       return (s || "").trim().toUpperCase();
     }
     function setStatus(html){
       statusEl.innerHTML = html;
     }
-
+ 
     async function startScan(){
       scanLayer.style.display = "block";
       scanHud.textContent = "Starting camera…";
       setStatus("Scanning…");
-
+ 
       stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "environment" },
         audio: false
       });
-
+ 
       cam.srcObject = stream;
       await cam.play();
-
+ 
       scanning = true;
-      scanHud.innerHTML = "Point camera at QR: <b>A1</b>";
+      scanHud.innerHTML = "Point camera at QR: <b>A1–A7</b>";
       scanLoop();
     }
-
+ 
     function stopScan(){
       scanning = false;
       scanLayer.style.display = "none";
@@ -88,54 +102,72 @@
       stream = null;
       cam.srcObject = null;
     }
-
-    async function playVideo(){
-      player.src = VIDEO_FILE;
+ 
+    async function playByCode(code){
+      const key = norm(code);
+      const file = VIDEO_MAP[key];
+ 
+      if (!file){
+        setStatus(`QR read: <b>${key}</b> (not mapped)`);
+        return;
+      }
+ 
+      setStatus(`Loading <b>${key}</b>…`);
+      player.src = file;
       player.currentTime = 0;
+ 
       try{
         await player.play();
-        setStatus("Playing video.mp4");
+        setStatus(`Playing <b>${key}</b> — ${file}`);
       }catch(e){
-        setStatus("Loaded video.mp4 — tap Play (autoplay blocked)");
+        setStatus(`Loaded <b>${key}</b> — tap Play (autoplay blocked)`);
       }
     }
-
+ 
     function scanLoop(){
       if (!scanning) return;
-
+ 
       const w = cam.videoWidth || 1280;
       const h = cam.videoHeight || 720;
-
+ 
       canvas.width = w;
       canvas.height = h;
       ctx.drawImage(cam, 0, 0, w, h);
-
+ 
       const img = ctx.getImageData(0, 0, w, h);
       const code = jsQR(img.data, w, h, { inversionAttempts: "attemptBoth" });
-
+ 
       if (code && code.data){
         const text = norm(code.data);
-
-        if (text === EXPECTED_QR){
-          scanHud.textContent = `Detected: ${text} ✅`;
-          stopScan();
-          playVideo();
-          return;
+        const now = Date.now();
+ 
+        // Show what we read (helps debugging)
+        if (!VIDEO_MAP[text]){
+          scanHud.textContent = `Read: ${text} (need A1–A7)`;
         } else {
-          scanHud.textContent = `Read: ${text} (need ${EXPECTED_QR})`;
+          scanHud.textContent = `Detected: ${text} ✅`;
+        }
+ 
+        // Only trigger if mapped and debounce allows
+        if (VIDEO_MAP[text] && (text !== lastCode || (now - lastSwitchAt) > COOLDOWN_MS)){
+          lastCode = text;
+          lastSwitchAt = now;
+          stopScan();
+          playByCode(text);
+          return;
         }
       }
-
+ 
       requestAnimationFrame(scanLoop);
     }
-
+ 
     document.getElementById("scanBtn").addEventListener("click", () => {
       startScan().catch(err => {
         console.error(err);
         setStatus("Camera blocked — must be HTTPS + allow permission");
       });
     });
-
+ 
     document.getElementById("fsBtn").addEventListener("click", async () => {
       try{
         await document.documentElement.requestFullscreen();
@@ -143,13 +175,14 @@
         setStatus("Fullscreen blocked");
       }
     });
-
+ 
     document.getElementById("stopBtn").addEventListener("click", () => {
       player.pause();
       player.removeAttribute("src");
       player.load();
-      setStatus(`Stopped — scan <b>${EXPECTED_QR}</b> again`);
+      setStatus("Stopped — scan <b>A1–A7</b> again");
     });
   </script>
 </body>
 </html>
+ 
